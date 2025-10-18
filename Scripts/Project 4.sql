@@ -3,6 +3,12 @@
 -- a. App Trader will purchase apps for 10,000 times the price of the app. 
 --For apps that are priced from free up to $1.00, the purchase price is $10,000.
 
+select *
+from app_store_apps
+select *
+from play_store_apps
+
+
 SELECT
     name AS app_name,
     GREATEST(
@@ -22,19 +28,6 @@ select
 -- - The cost of an app is not affected by how many app stores it is on. A $1.00 app on the Apple app store will cost the same as a $1.00 app on both stores. 
 -- - If an app is on both stores, it's purchase price will be calculated based off of the highest app price between the two stores. 
 
-select *
-from app_store_apps
-select *
-from play_store_apps
-
-
-SELECT app_store_apps.name,
-  MAX(price) AS max_price,
-  10000.0 * GREATEST(1.0, MAX(price)):: money AS purchase_price
-FROM app_store_apps
-GROUP BY app_store_apps.name
-ORDER BY purchase_price DESC
-LIMIT 20
 
 SELECT app_store_apps.name,
   price AS max_price,
@@ -78,11 +71,8 @@ ORDER BY app_name;
 
 -- e. App Trader would prefer to work with apps that are available in both the App Store and the Play Store since they can market both for the same $1000 per month.
 
-
-
-
 SELECT 
-  name,
+  name as app_name,
 GREATEST(app_store_apps.price, 1) * 10000 AS purchase_price,
   CASE 
     WHEN app_store_apps AND play_store_apps THEN 10000
@@ -94,12 +84,12 @@ inner join play_store_apps
 using(name)
 
 
-
 SELECT play_store_apps.name,
   MAX(price) AS max_price
 FROM play_store_apps
 GROUP BY play_store_apps.name
 ORDER BY max_price
+
 
 Select Play_store_apps.genres as pl_genres,
        name as app_name,
@@ -172,8 +162,6 @@ SELECT
 FROM app_store_apps AS a
 FULL OUTER JOIN play_store_apps AS p
 USING (name);
-
-
 
 
 
@@ -268,49 +256,9 @@ ROUND(
 FROM app_store_apps)
 ORDER BY price DESC, purchase_price DESC
 
+-- ______________________________________________________________________________________________________
 
-
-
-SELECT
-    COALESCE(a.name, p.name) AS app_name,
-	        a.price, p.price,
-    -- Clean price and convert to numeric
-    GREATEST(
-        COALESCE(NULLIF(REGEXP_REPLACE(TRIM(a.price), '[$,]', '', 'g'), ''),
-        COALESCE(NULLIF(REGEXP_REPLACE(TRIM(p.price), '[$,]', '', 'g'), '')::numeric, 0),
-        1
-    ) * 10000) AS purchase_price,
-    -- Count stores and calculate monthly revenue
-    (COALESCE(a.name IS NOT NULL, FALSE)::int +
-     COALESCE(p.name IS NOT NULL, FALSE)::int) * 5000 AS monthly_revenue,
-    -- Marketing cost
-    1000 AS monthly_marketing_cost,  
-    -- Profit = revenue - marketing
-    ((COALESCE(a.name IS NOT NULL, FALSE)::int +
-      COALESCE(p.name IS NOT NULL, FALSE)::int) * 5000 - 1000) AS monthly_profit
-FROM app_store_apps AS a
-FULL OUTER JOIN play_store_apps AS p
-USING (name)
-ORDER BY monthly_profit DESC
-LIMIT 10;
-
-______________________________________________
-
-SELECT 
-    app_name,
-    store,
-    price,
-    purchase_price,
-    store_count,
-    cost_per_month,
-    income_per_month,
-    rounded_rating,
-    expected_lifespan,
-    expected_revenue,
-    ROUND(expected_revenue - purchase_price, 2) AS total_expected_profit
-FROM (
-    (SELECT 
-        name AS app_name,
+(SELECT name,
         REPLACE(price, '$','')::numeric AS price,
         'playstore' AS store,
         CASE
@@ -318,93 +266,303 @@ FROM (
             WHEN REPLACE(price, '$', '')::numeric > 1.00 THEN REPLACE(price, '$', '')::numeric * 10000.0
             ELSE 0
         END AS purchase_price,
-        CASE 
+        CASE WHEN
+            name IN (
+                SELECT name FROM app_store_apps
+                INTERSECT
+                SELECT name FROM play_store_apps
+            ) THEN 2 ELSE 1 END AS store_count,
+        1000 AS cost_per_month,
+		5000 *
+        CASE
             WHEN name IN (
                 SELECT name FROM app_store_apps
                 INTERSECT
                 SELECT name FROM play_store_apps
-            ) THEN 2 ELSE 1 
-        END AS store_count,
-        1000 AS cost_per_month,
-        5000 * 
-            CASE 
+            ) THEN 2 ELSE 1
+        END AS income_per_month,
+		ROUND(ROUND(rating * 2) / 2, 1) AS rounded_rating,
+		ROUND((ROUND(rating * 2) / 2 * 2) + 1) AS expected_lifespan,
+-- for a total projected income
+		ROUND(
+    (((ROUND(rating * 2) / 2) * 2 + 1) * 12 *
+        (5000 *
+            CASE
                 WHEN name IN (
                     SELECT name FROM app_store_apps
                     INTERSECT
                     SELECT name FROM play_store_apps
-                ) THEN 2 ELSE 1 
-            END AS income_per_month,
-        ROUND(ROUND(rating * 2) / 2, 1) AS rounded_rating,
-        ROUND((ROUND(rating * 2) / 2 * 2) + 1) AS expected_lifespan,
-        ROUND(
-            (((ROUND(rating * 2) / 2) * 2 + 1) * 12 *
-                (5000 * 
-                    CASE 
-                        WHEN name IN (
-                            SELECT name FROM app_store_apps
-                            INTERSECT
-                            SELECT name FROM play_store_apps
-                        ) THEN 2 ELSE 1 
-                    END
-                )
-            ) -
-            (((ROUND(rating * 2) / 2) * 2 + 1) * 12 * 1000),
-            2
-        ) AS expected_revenue
-    FROM play_store_apps)
-
-    UNION
-
-    (SELECT 
-        name AS app_name,
-        price,
-        'appstore' AS store,
+                ) THEN 2 ELSE 1
+            END
+		)
+	) -
+    (((ROUND(rating * 2) / 2) * 2 + 1) * 12 * 1000),
+    2
+) AS expected_net_revenue,
+--total net profit
+ROUND((
+        (((ROUND(rating * 2) / 2) * 2 + 1) * 12 *
+            (5000 *
+                CASE
+                    WHEN name IN (
+                        SELECT name FROM app_store_apps
+                        INTERSECT
+                        SELECT name FROM play_store_apps
+                    ) THEN 2 ELSE 1
+                END
+            )
+        ) -
+        (((ROUND(rating * 2) / 2) * 2 + 1) * 12 * 1000)
+    ) -
+    CASE
+            WHEN REPLACE(price, '$', '')::numeric <= 1.00 THEN 10000.0
+            WHEN REPLACE(price, '$', '')::numeric > 1.00 THEN REPLACE(price, '$', '')::numeric * 10000.0
+            ELSE 0
+    END,
+    2
+) AS expected_net_profit
+FROM play_store_apps
+WHERE rating IS NOT NULL)
+-------------------------------------------
+UNION
+-------------------------------------------
+(SELECT name,
+	price,
+	'appstore' AS store,
+---------for how much App Trader has to pay to buy each app---------
+	CASE
+		WHEN price <=1.00 THEN 10000.0
+		WHEN price >1.00 THEN price * 10000.0
+		ELSE '0'
+		END AS purchase_price,
+---------for what store(s) the apps are on__________
+		CASE WHEN
+		name IN (
+			SELECT
+				name
+			FROM app_store_apps
+---------for how many stores each app is on---------
+			INTERSECT
+			SELECT
+				name
+			FROM play_store_apps)
+		THEN 2
+		ELSE 1
+		END AS store_count,
+----------for expenses per month--------------------
+		1000 AS cost_per_month,
+---------for income per month-----------------------
+		5000 *
         CASE
-            WHEN price <= 1.00 THEN 10000.0
-            WHEN price > 1.00 THEN price * 10000.0
+            WHEN name IN (
+                SELECT name FROM app_store_apps
+                INTERSECT
+                SELECT name FROM play_store_apps
+            ) THEN 2 ELSE 1
+        END AS income_per_month,
+---------- for rounding the rating column-----------
+		ROUND(ROUND(rating * 2) / 2, 1)
+		AS rounded_rating,
+-----------for calculating the expected lifespan----
+		ROUND((ROUND(rating * 2) / 2 * 2) + 1, 1)
+		AS expected_lifespan,
+-----------for a total projected net revenue--------
+		ROUND(
+    (((ROUND(rating * 2) / 2) * 2 + 1) * 12 *
+        (5000 *
+            CASE
+                WHEN name IN (
+                    SELECT name FROM app_store_apps
+                    INTERSECT
+                    SELECT name FROM play_store_apps
+                ) THEN 2 ELSE 1
+            END
+        )
+    ) -
+    (((ROUND(rating * 2) / 2) * 2 + 1) * 12 * 1000),
+    2
+) AS expected_net_revenue,
+----------for a total net profit (repeat net profit - the purchase price)
+ROUND((
+        (((ROUND(rating * 2) / 2) * 2 + 1) * 12 *
+            (5000 *
+                CASE
+                    WHEN name IN (
+                        SELECT name FROM app_store_apps
+                        INTERSECT
+                        SELECT name FROM play_store_apps
+                    ) THEN 2 ELSE 1
+                END
+            )
+        ) -
+        (((ROUND(rating * 2) / 2) * 2 + 1) * 12 * 1000)
+    ) -
+	CASE
+	  WHEN price <= 1.00 THEN 10000.0
+	  WHEN price > 1.00 THEN price * 10000.0
+	  ELSE 0
+    END,
+    2
+) AS expected_net_profit
+-------------end statement-------------------------
+FROM app_store_apps
+WHERE rating IS NOT NULL)
+ORDER BY expected_net_profit DESC
+LIMIT 25;
+
+-- ______________________________________________________.
+
+(SELECT name,
+        REPLACE(price, '$','')::numeric AS price,
+        'playstore' AS store,
+        CASE
+            WHEN REPLACE(price, '$', '')::numeric <= 1.00 THEN 10000.0
+            WHEN REPLACE(price, '$', '')::numeric > 1.00 THEN REPLACE(price, '$', '')::numeric * 10000.0
             ELSE 0
         END AS purchase_price,
-        CASE 
+        CASE WHEN
+            name IN (
+                SELECT name FROM app_store_apps
+                INTERSECT
+                SELECT name FROM play_store_apps
+            ) THEN 2 ELSE 1 END AS store_count,
+        1000 AS cost_per_month,
+		5000 *
+        CASE
             WHEN name IN (
                 SELECT name FROM app_store_apps
                 INTERSECT
                 SELECT name FROM play_store_apps
-            ) THEN 2 ELSE 1 
-        END AS store_count,
-        1000 AS cost_per_month,
-        5000 * 
-            CASE 
+            ) THEN 2 ELSE 1
+        END AS income_per_month,
+		ROUND(ROUND(rating * 2) / 2, 1) AS rounded_rating,
+		ROUND((ROUND(rating * 2) / 2 * 2) + 1) AS expected_lifespan,
+-- for a total projected income
+		ROUND(
+    (((ROUND(rating * 2) / 2) * 2 + 1) * 12 *
+        (5000 *
+            CASE
                 WHEN name IN (
                     SELECT name FROM app_store_apps
                     INTERSECT
                     SELECT name FROM play_store_apps
-                ) THEN 2 ELSE 1 
-            END AS income_per_month,
-        ROUND(ROUND(rating * 2) / 2, 1) AS rounded_rating,
-        ROUND((ROUND(rating * 2) / 2 * 2) + 1, 1) AS expected_lifespan,
-        ROUND(
-            (((ROUND(rating * 2) / 2) * 2 + 1) * 12 *
-                (5000 * 
-                    CASE 
-                        WHEN name IN (
-                            SELECT name FROM app_store_apps
-                            INTERSECT
-                            SELECT name FROM play_store_apps
-                        ) THEN 2 ELSE 1 
-                    END
-                )
-            ) -
-            (((ROUND(rating * 2) / 2) * 2 + 1) * 12 * 1000),
-            2
-        ) AS expected_revenue
-    FROM app_store_apps)
-) AS combined
-ORDER BY (expected_revenue - purchase_price) DESC
+                ) THEN 2 ELSE 1
+            END
+		)
+	) -
+    (((ROUND(rating * 2) / 2) * 2 + 1) * 12 * 1000),
+    2
+) AS expected_net_revenue,
+--total net profit
+ROUND((
+        (((ROUND(rating * 2) / 2) * 2 + 1) * 12 *
+            (5000 *
+                CASE
+                    WHEN name IN (
+                        SELECT name FROM app_store_apps
+                        INTERSECT
+                        SELECT name FROM play_store_apps
+                    ) THEN 2 ELSE 1
+                END
+            )
+        ) -
+        (((ROUND(rating * 2) / 2) * 2 + 1) * 12 * 1000)
+    ) -
+    CASE
+            WHEN REPLACE(price, '$', '')::numeric <= 1.00 THEN 10000.0
+            WHEN REPLACE(price, '$', '')::numeric > 1.00 THEN REPLACE(price, '$', '')::numeric * 10000.0
+            ELSE 0
+    END,
+    2
+) AS expected_net_profit
+FROM play_store_apps
+WHERE rating IS NOT NULL)
+-------------------------------------------
+UNION
+-------------------------------------------
+(SELECT name,
+	price,
+	'appstore' AS store,
+---------for how much App Trader has to pay to buy each app---------
+	CASE
+		WHEN price <=1.00 THEN 10000.0
+		WHEN price >1.00 THEN price * 10000.0
+		ELSE '0'
+		END AS purchase_price,
+---------for what store(s) the apps are on__________
+		CASE WHEN
+		name IN (
+			SELECT
+				name
+			FROM app_store_apps
+---------for how many stores each app is on---------
+			INTERSECT
+			SELECT
+				name
+			FROM play_store_apps)
+		THEN 2
+		ELSE 1
+		END AS store_count,
+----------for expenses per month--------------------
+		1000 AS cost_per_month,
+---------for income per month-----------------------
+		5000 *
+        CASE
+            WHEN name IN (
+                SELECT name FROM app_store_apps
+                INTERSECT
+                SELECT name FROM play_store_apps
+            ) THEN 2 ELSE 1
+        END AS income_per_month,
+---------- for rounding the rating column-----------
+		ROUND(ROUND(rating * 2) / 2, 1)
+		AS rounded_rating,
+-----------for calculating the expected lifespan----
+		ROUND((ROUND(rating * 2) / 2 * 2) + 1, 1)
+		AS expected_lifespan,
+-----------for a total projected net revenue--------
+		ROUND(
+    (((ROUND(rating * 2) / 2) * 2 + 1) * 12 *
+        (5000 *
+            CASE
+                WHEN name IN (
+                    SELECT name FROM app_store_apps
+                    INTERSECT
+                    SELECT name FROM play_store_apps
+                ) THEN 2 ELSE 1
+            END
+        )
+    ) -
+    (((ROUND(rating * 2) / 2) * 2 + 1) * 12 * 1000),
+    2
+) AS expected_net_revenue,
+----------for a total net profit (repeat net profit - the purchase price)
+ROUND((
+        (((ROUND(rating * 2) / 2) * 2 + 1) * 12 *
+            (5000 *
+                CASE
+                    WHEN name IN (
+                        SELECT name FROM app_store_apps
+                        INTERSECT
+                        SELECT name FROM play_store_apps
+                    ) THEN 2 ELSE 1
+                END
+            )
+        ) -
+        (((ROUND(rating * 2) / 2) * 2 + 1) * 12 * 1000)
+    ) -
+	CASE
+	  WHEN price <= 1.00 THEN 10000.0
+	  WHEN price > 1.00 THEN price * 10000.0
+	  ELSE 0
+    END,
+    2
+) AS expected_net_profit
+-------------end statement-------------------------
+FROM app_store_apps
+WHERE rating IS NOT NULL)
+ORDER BY expected_net_profit DESC
 LIMIT 10;
-
-
-
-
 
 
 
