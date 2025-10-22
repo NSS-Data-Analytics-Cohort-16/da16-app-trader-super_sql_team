@@ -71,18 +71,6 @@ ORDER BY app_name;
 
 -- e. App Trader would prefer to work with apps that are available in both the App Store and the Play Store since they can market both for the same $1000 per month.
 
-SELECT 
-  name as app_name,
-GREATEST(app_store_apps.price, 1) * 10000 AS purchase_price,
-  CASE 
-    WHEN app_store_apps AND play_store_apps THEN 10000
-    ELSE 5000
-  END AS monthly_revenue,
-  1000 AS monthly_marketing_cost
-  FROM app_store_apps
-inner join play_store_apps
-using(name)
-
 
 SELECT play_store_apps.name,
   MAX(price) AS max_price
@@ -131,15 +119,15 @@ and primary_genre is not null
 order by name desc
 
 
-SELECT
-    COALESCE(a.name::text, p.name::text) AS app_name,
-    CASE
-        WHEN a.name IS NOT NULL AND p.name IS NOT NULL THEN 10000
-        ELSE 5000
-    END AS monthly_revenue
-FROM app_store_apps AS a
-FULL OUTER JOIN play_store_apps AS p
-USING (name);
+-- SELECT
+--     COALESCE(a.name::text, p.name::text) AS app_name,
+--     CASE
+--         WHEN a.name IS NOT NULL AND p.name IS NOT NULL THEN 10000
+--         ELSE 5000
+--     END AS monthly_revenue
+-- FROM app_store_apps AS a
+-- FULL OUTER JOIN play_store_apps AS p
+-- USING (name);
 
 
 SELECT
